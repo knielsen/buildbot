@@ -1,4 +1,5 @@
 import re
+import exceptions
 from twisted.python import log
 from twisted.internet import defer
 from buildbot.process.buildstep import LogLineObserver
@@ -92,10 +93,16 @@ class MtrLogObserver(LogLineObserver):
         pass
 
 class MTR(Test):
-    def __init__(self, **kwargs):
+    def __init__(self, dbpool=None, test_type="mysql-test-run", test_info="", **kwargs):
         Test.__init__(self, **kwargs)
+        self.dbpool = dbpool
+        self.test_type = test_type
+        self.test_info = test_info
         self.addLogObserver("stdio", self.MyMtrLogObserver())
         self.progressMetrics += ('tests',)
+        self.addFactoryArguments(dbpool=self.dbpool,
+                                 test_type=self.test_type,
+                                 test_info=self.test_info)
 
     def start(self):
         # Insert a row for this test run into the database and set up
@@ -105,20 +112,102 @@ class MTR(Test):
         d.addErrback(self.failed)
 
     def registerInDB(self):
-        # ToDo
-        log.msg("registerInDB()")
-        return defer.succeed(0)
+        insert_id = 0
+        if self.dbpool:
+            return self.dbpool.runInteraction(self.doRegisterInDB)
+        else:
+            return defer.succeed(0)
+
+    # The real database work is done in a thread in a synchronous way.
+    def doRegisterInDB(self, txn):
+        txn.execute("""
+CREATE TABLE IF NOT EXISTS test_run(
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    branch VARCHAR(100),
+    revision VARCHAR(32) NOT NULL,
+    platform VARCHAR(100) NOT NULL,
+    dt TIMESTAMP NOT NULL,
+    bbnum INT NOT NULL,
+    typ VARCHAR(32) NOT NULL,
+    INFO VARCHAR(255),
+    KEY (branch, revision),
+    KEY (dt),
+    KEY (platform, bbnum)
+) ENGINE=innodb
+""")
+        txn.execute("""
+CREATE TABLE IF NOT EXISTS test_failure(
+    test_run_id INT NOT NULL,
+    test_name VARCHAR(100) NOT NULL,
+    test_variant VARCHAR(16) NOT NULL,
+    info_text VARCHAR(255),
+    failure_text TEXT,
+    PRIMARY KEY (test_run_id, test_name, test_variant)
+) ENGINE=innodb
+""")
+        txn.execute("""
+CREATE TABLE IF NOT EXISTS test_warnings(
+    test_run_id INT NOT NULL,
+    list_id INT NOT NULL,
+    list_idx INT NOT NULL,
+    test_name VARCHAR(100) NOT NULL,
+    PRIMARY KEY (test_run_id, list_id, list_idx)
+) ENGINE=innodb
+""")
+        revision = None
+        try:
+            revision = self.getProperty("got_revision")
+        except exceptions.KeyError:
+            revision = self.getProperty("revision")
+        txn.execute("""
+INSERT INTO test_run(branch, revision, platform, dt, bbnum, typ, info)
+VALUES (%s, %s, %s, CURRENT_TIMESTAMP(), %s, %s, %s)
+""", (self.getProperty("branch"), revision,
+      self.getProperty("buildername"), self.getProperty("buildnumber"),
+      self.test_type, self.test_info))
+
+        return txn.lastrowid
 
     def afterRegisterInDB(self, insert_id):
         self.setProperty("mtr_id", insert_id)
-        # ToDo: maybe more properties, like test type?
+        self.setProperty("mtr_warn_id", 0)
 
         Test.start(self)
 
     class MyMtrLogObserver(MtrLogObserver):
         def collectTestFail(self, testname, variant, result, info, text):
-            # ToDo
-            log.msg("FAIL: %s '%s' %s" % (testname, variant, info))
+            dbpool = self.step.dbpool
+            run_id = self.step.getProperty("mtr_id")
+            if dbpool == None:
+                return defer.succeed(None)
+            if variant == None:
+                variant = ""
+            d = dbpool.runQuery("""
+INSERT INTO test_failure(test_run_id, test_name, test_variant, info_text, failure_text)
+VALUES (%s, %s, %s, %s, %s)
+""", (run_id, testname, variant, info, text))
+
+            d.addErrback(self.step.failed)
+            return d
+
         def collectWarningTests(self, testList):
-            # ToDo
-            log.msg("FAILLIST: %s" % (" ".join(testList)))
+            dbpool = self.step.dbpool
+            if dbpool == None:
+                return defer.succeed(None)
+            run_id = self.step.getProperty("mtr_id")
+            warn_id = self.step.getProperty("mtr_warn_id")
+            self.step.setProperty("mtr_warn_id", warn_id + 1)
+            q = ("INSERT INTO test_warnings(test_run_id, list_id, list_idx, test_name) " +
+                 "VALUES " + ", ".join(map(lambda x: "(%s, %s, %s, %s)", testList)))
+            v = []
+            idx = 0
+            for t in testList:
+                v.extend([run_id, warn_id, idx, t])
+                idx = idx + 1
+            d = dbpool.runQuery(q, tuple(v))
+            d.addErrback(self.step.failed)
+            return d
+
+# ToDo:
+#  1. Async fail on collect*() is not good. Especially with multiple fail.
+#  2. CREATE TABLE IF NOT EXISTS gives mysql warnings in log for every test run.
