@@ -136,17 +136,23 @@ class LogLineObserver(ObserverTestCase):
 
 class MyMtrLogObserver(mtrlogobserver.MtrLogObserver):
     def __init__(self):
-        mtrlogobserver.MtrLogObserver.__init__(self)
+        mtrlogobserver.MtrLogObserver.__init__(self, textLimit=3, testNameLimit=15)
         self.testFails = []
         self.testWarnLists = []
         # We don't have a buildstep in self.step.
         # So we'll just install ourself there, so we can check the call of
         # setProgress().
+        # Same for self.step.step_status.setText()
         self.step = self
+        self.step_status = self
         self.progresses = []
+        self.text = []
 
     def setProgress(self, type, value):
         self.progresses.append((type, value))
+
+    def setText(self, text):
+        self.text = text
 
     def collectTestFail(self, testname, variant, result, info, text):
         self.testFails.append((testname, variant, result, info, text))
@@ -190,6 +196,7 @@ following sequence(s) of tests:
                          map((lambda (x): ('tests', x)), [1,2,3,4]))
         self.assertEqual(self.observer.testWarnLists, [["rpl.rpl_ssl"]])
         self.assertEqual(self.observer.testFails, [])
+        self.assertEqual(self.observer.text[1:], ["W:rpl_ssl"])
 
     def test2(self):
         self._logStdout("""
@@ -447,6 +454,7 @@ Retrying test, attempt(2/3)...
                          [ ("rpl.rpl_temporary_errors", "mix", "fail", "", failtext1),
                            ("main.information_schema_all_engines", "", "fail", "timeout after 900 seconds", failtext2)
                            ])
+        self.assertEqual(self.observer.text[1:], ["F:information_s...", "F:rpl_temporary...", "W:ctype_recoding", "W:ctype_ujis_ucs2", "W:handler_myisam"])
 
 class RemoteShellTest(unittest.TestCase):
     def testRepr(self):
