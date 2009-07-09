@@ -22,8 +22,8 @@ class MtrTestFailData:
 
 
 class MtrLogObserver(LogLineObserver):
-    _line_re = re.compile(r"^([-._0-9a-zA-z]+)( '[a-z]+')?\s+\[ (fail|pass) \]\s*(.*)$")
-    _line_re2 = re.compile(r"^[-._0-9a-zA-z]+( '[a-z]+')?\s+\[ [-a-z]+ \]")
+    _line_re = re.compile(r"^([-._0-9a-zA-z]+)( '[a-z]+')?\s+(w[0-9]+\s+)?\[ (fail|pass) \]\s*(.*)$")
+    _line_re2 = re.compile(r"^[-._0-9a-zA-z]+( '[a-z]+')?\s+(w[0-9]+\s+)?\[ [-a-z]+ \]")
     _line_re3 = re.compile(r"^\*\*\*Warnings generated in error logs during shutdown after running tests: (.*)")
     _line_re4 = re.compile(r"^The servers were restarted [0-9]+ times$")
     _line_re5 = re.compile(r"^Only\s+[0-9]+\s+of\s+[0-9]+\s+completed.$")
@@ -46,7 +46,7 @@ class MtrLogObserver(LogLineObserver):
         stripLine = line.strip("\r\n")
         m = self._line_re.search(stripLine)
         if m:
-            testname, variant, result, info = m.groups()
+            testname, variant, worker, result, info = m.groups()
             self.closeTestFail()
             self.numTests += 1
             self.step.setProgress('tests', self.numTests)
