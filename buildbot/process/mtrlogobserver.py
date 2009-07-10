@@ -146,21 +146,32 @@ class MtrLogObserver(LogLineObserver):
 
 class MTR(Test):
     def __init__(self, dbpool=None, test_type="mysql-test-run", test_info="",
-                 autoCreateTables=False, textLimit=5, testNameLimit=16, **kwargs):
-        Test.__init__(self, **kwargs)
+                 autoCreateTables=False, textLimit=5, testNameLimit=16,
+                 parallel=4, logfiles = {}, lazylogfiles = True, **kwargs):
+
+        # Add mysql server logfiles.
+        for mtr in range(1, parallel+1):
+            for mysqld in range(1, 4+1):
+                logname = "mysqld.%d.err.%d" % (mysqld, mtr)
+                filename = "mysql-test/var/%d/log/mysqld.%d.err" % (mtr, mysqld)
+                logfiles[logname] = filename
+        Test.__init__(self, logfiles=logfiles, lazylogfiles=lazylogfiles, **kwargs)
         self.dbpool = dbpool
         self.test_type = test_type
         self.test_info = test_info
         self.autoCreateTables = autoCreateTables
         self.textLimit = textLimit
         self.testNameLimit = testNameLimit
+        self.parallel = parallel
         self.progressMetrics += ('tests',)
+
         self.addFactoryArguments(dbpool=self.dbpool,
                                  test_type=self.test_type,
                                  test_info=self.test_info,
                                  autoCreateTables=self.autoCreateTables,
                                  textLimit=self.textLimit,
-                                 testNameLimit=self.testNameLimit)
+                                 testNameLimit=self.testNameLimit,
+                                 parallel=self.parallel)
 
     def start(self):
         self.myMtr = self.MyMtrLogObserver(textLimit=self.textLimit,
