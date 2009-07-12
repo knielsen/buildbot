@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS test_run(
     dt TIMESTAMP NOT NULL,
     bbnum INT NOT NULL,
     typ VARCHAR(32) NOT NULL,
-    INFO VARCHAR(255),
+    info VARCHAR(255),
     KEY (branch, revision),
     KEY (dt),
     KEY (platform, bbnum)
