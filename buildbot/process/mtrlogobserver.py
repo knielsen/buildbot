@@ -2,8 +2,27 @@ import re
 import exceptions
 from twisted.python import log
 from twisted.internet import defer
+from twisted.enterprise import adbapi
 from buildbot.process.buildstep import LogLineObserver
 from buildbot.steps.shell import Test
+
+class EqConnectionPool(adbapi.ConnectionPool):
+    """This class works the same way as
+twisted.enterprise.adbapi.ConnectionPool. But it adds the ability to
+compare connection pools for equality (by comparing the arguments
+passed to the constructor).
+
+This is useful when passing the ConnectionPool to a BuildStep, as
+otherwise Buildbot will consider the buildstep (and hence the
+containing buildfactory) to have changed every time the configuration
+is reloaded.
+"""
+    def __init__(self, *args, **kwargs):
+        self._eqKey = (args, kwargs)
+        return adbapi.ConnectionPool.__init__(self, *args, **kwargs)
+    def __eq__(self, other):
+        return self._eqKey == other._eqKey
+
 
 class MtrTestFailData:
     def __init__(self, testname, variant, result, info, text, callback):
