@@ -20,8 +20,15 @@ is reloaded.
     def __init__(self, *args, **kwargs):
         self._eqKey = (args, kwargs)
         return adbapi.ConnectionPool.__init__(self, *args, **kwargs)
+
     def __eq__(self, other):
-        return self._eqKey == other._eqKey
+        if isinstance(other, EqConnectionPool):
+            return self._eqKey == other._eqKey
+        else:
+            return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
 
 class MtrTestFailData:
