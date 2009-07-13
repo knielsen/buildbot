@@ -176,10 +176,14 @@ class MTR(Test):
                  parallel=4, logfiles = {}, lazylogfiles = True, **kwargs):
 
         # Add mysql server logfiles.
-        for mtr in range(1, parallel+1):
+        for mtr in range(0, parallel+1):
             for mysqld in range(1, 4+1):
-                logname = "mysqld.%d.err.%d" % (mysqld, mtr)
-                filename = "mysql-test/var/%d/log/mysqld.%d.err" % (mtr, mysqld)
+                if mtr == 0:
+                    logname = "mysqld.%d.err" % mysqld
+                    filename = "mysql-test/var/log/mysqld.%d.err" % mysqld
+                else:
+                    logname = "mysqld.%d.err.%d" % (mysqld, mtr)
+                    filename = "mysql-test/var/%d/log/mysqld.%d.err" % (mtr, mysqld)
                 logfiles[logname] = filename
         Test.__init__(self, logfiles=logfiles, lazylogfiles=lazylogfiles, **kwargs)
         self.dbpool = dbpool
