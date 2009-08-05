@@ -1,3 +1,4 @@
+import sys
 import re
 import exceptions
 from twisted.python import log
@@ -19,7 +20,9 @@ is reloaded.
 """
     def __init__(self, *args, **kwargs):
         self._eqKey = (args, kwargs)
-        return adbapi.ConnectionPool.__init__(self, *args, **kwargs)
+        return adbapi.ConnectionPool.__init__(self,
+                                              cp_reconnect=True, cp_min=1, cp_max=3,
+                                              *args, **kwargs)
 
     def __eq__(self, other):
         if isinstance(other, EqConnectionPool):
@@ -216,10 +219,54 @@ class MTR(Test):
     def getText(self, command, results):
         return self.myMtr.makeText(True)
 
+    def runInteractionWithRetry(self, actionFn, *args, **kw):
+        """
+        Run a database transaction with dbpool.runInteraction, but retry the
+        transaction in case of a temporary error (like connection lost).
+
+        This is needed to be robust against things like database connection
+        idle timeouts.
+
+        The passed callable that implements the transaction must be retryable,
+        ie. it must not have any destructive side effects in the case where
+        an exception is thrown and/or rollback occurs that would prevent it
+        from functioning correctly when called again."""
+
+        def runWithRetry(txn, *args, **kw):
+            retryCount = 0
+            while(True):
+                try:
+                    return actionFn(txn, *args, **kw)
+                except txn.OperationalError:
+                    retryCount += 1
+                    if retryCount >= 5:
+                        raise
+                    excType, excValue, excTraceback = sys.exc_info()
+                    log.msg("Database transaction failed (caught exception %s(%s)), retrying ..." % (excType, excValue))
+                    txn.close()
+                    txn.reconnect()
+                    txn.reopen()
+
+        return self.dbpool.runInteraction(runWithRetry, *args, **kw)
+
+    def runQueryWithRetry(self, *args, **kw):
+        """
+        Run a database query, like with dbpool.runQuery, but retry the query in
+        case of a temporary error (like connection lost).
+
+        This is needed to be robust against things like database connection
+        idle timeouts."""
+
+        def runQuery(txn, *args, **kw):
+            txn.execute(*args, **kw)
+            return txn.fetchall()
+
+        return self.runInteractionWithRetry(runQuery, *args, **kw)
+
     def registerInDB(self):
         insert_id = 0
         if self.dbpool:
-            return self.dbpool.runInteraction(self.doRegisterInDB)
+            return self.runInteractionWithRetry(self.doRegisterInDB)
         else:
             return defer.succeed(0)
 
@@ -285,6 +332,9 @@ VALUES (%s, %s, %s, CURRENT_TIMESTAMP(), %s, %s, %s)
 
         Test.start(self)
 
+    def reportError(self, err):
+        log.msg("Error in async insert into database: %s" % err)
+
     class MyMtrLogObserver(MtrLogObserver):
         def collectTestFail(self, testname, variant, result, info, text):
             # Insert asynchronously into database.
@@ -294,12 +344,12 @@ VALUES (%s, %s, %s, CURRENT_TIMESTAMP(), %s, %s, %s)
                 return defer.succeed(None)
             if variant == None:
                 variant = ""
-            d = dbpool.runQuery("""
+            d = self.step.runQueryWithRetry("""
 INSERT INTO test_failure(test_run_id, test_name, test_variant, info_text, failure_text)
 VALUES (%s, %s, %s, %s, %s)
 """, (run_id, testname, variant, info, text))
 
-            d.addErrback(self.reportError)
+            d.addErrback(self.step.reportError)
             return d
 
         def collectWarningTests(self, testList):
@@ -317,9 +367,6 @@ VALUES (%s, %s, %s, %s, %s)
             for t in testList:
                 v.extend([run_id, warn_id, idx, t])
                 idx = idx + 1
-            d = dbpool.runQuery(q, tuple(v))
-            d.addErrback(self.reportError)
+            d = self.step.runQueryWithRetry(q, tuple(v))
+            d.addErrback(self.step.reportError)
             return d
-
-        def reportError(self, err):
-            log.msg("Error in async insert into database: %s" % err)
