@@ -17,6 +17,9 @@ This is useful when passing the ConnectionPool to a BuildStep, as
 otherwise Buildbot will consider the buildstep (and hence the
 containing buildfactory) to have changed every time the configuration
 is reloaded.
+
+It also sets some defaults differently from adbapi.ConnectionPool that
+are more suitable for use in MTR.
 """
     def __init__(self, *args, **kwargs):
         self._eqKey = (args, kwargs)
@@ -51,12 +54,26 @@ class MtrTestFailData:
 
 
 class MtrLogObserver(LogLineObserver):
+    """
+    Class implementing a log observer (can be passed to
+    BuildStep.addLogObserver().
+
+    It parses the output of mysql-test-run.pl as used in MySQL,
+    MariaDB, Drizzle, etc.
+
+    It counts number of tests run and uses it to provide more accurate
+    completion estimates.
+
+    It parses out test failures from the output and summarises the results on
+    the Waterfall page. It also passes the information to methods that can be
+    overridden in a subclass to do further processing on the information."""
+
     _line_re = re.compile(r"^([-._0-9a-zA-z]+)( '[a-z]+')?\s+(w[0-9]+\s+)?\[ (fail|pass) \]\s*(.*)$")
     _line_re2 = re.compile(r"^[-._0-9a-zA-z]+( '[a-z]+')?\s+(w[0-9]+\s+)?\[ [-a-z]+ \]")
     _line_re3 = re.compile(r"^\*\*\*Warnings generated in error logs during shutdown after running tests: (.*)")
     _line_re4 = re.compile(r"^The servers were restarted [0-9]+ times$")
     _line_re5 = re.compile(r"^Only\s+[0-9]+\s+of\s+[0-9]+\s+completed.$")
-    
+
     def __init__(self, textLimit=5, testNameLimit=16):
         self.textLimit = textLimit
         self.testNameLimit = testNameLimit
@@ -151,7 +168,7 @@ class MtrLogObserver(LogLineObserver):
     def displayTestName(self, testname):
 
         displayTestName = self.strip_re.sub("", testname)
-        
+
         if len(displayTestName) > self.testNameLimit:
             displayTestName = displayTestName[:(self.testNameLimit-2)] + "..."
         return displayTestName
@@ -174,6 +191,63 @@ class MtrLogObserver(LogLineObserver):
         pass
 
 class MTR(Test):
+    """
+    Build step that runs mysql-test-run.pl, as used in MySQL, Drizzle,
+    MariaDB, etc.
+
+    It uses class MtrLogObserver to parse test results out from the
+    output of mysql-test-run.pl, providing better completion time
+    estimates and summarising test failures on the waterfall page.
+
+    It also provides access to mysqld server error logs from the test
+    run to help debugging any problems.
+
+    Optionally, it can insert into a database data about the test run,
+    including details of any test failures.
+
+    Parameters:
+
+    textLimit
+        Maximum number of test failures to show on the waterfall page
+        (to not flood the page in case of a large number of test
+        failures. Defaults to 5.
+
+    testNameLimit
+        Maximum length of test names to show unabbreviated in the
+        waterfall page, to avoid excessive column width. Defaults to 16.
+
+    parallel
+        Value of --parallel option used for mysql-test-run.pl (number
+        of processes used to run the test suite in parallel). Defaults
+        to 4. This is used to determine the number of server error log
+        files to download from the slave. Specifying a too high value
+        does not hurt (as nonexisting error logs will be ignored),
+        however if using --parallel value greater than the default it
+        needs to be specified, or some server error logs will be
+        missing.
+
+    dbpool
+        An instance of twisted.enterprise.adbapi.ConnectionPool, or None.
+        Defaults to None. If specified, results are inserted into the database
+        using the ConnectionPool.
+
+        The class process.mtrlogobserver.EqConnectionPool subclass of
+        ConnectionPool can be useful to pass as value for dbpool, to
+        avoid having config reloads think the Buildstep is changed
+        just because it gets a new ConnectionPool instance (even
+        though connection parameters are unchanged).
+
+    autoCreateTables
+        Boolean, defaults to False. If True (and dbpool is specified), the
+        necessary database tables will be created automatically if they do
+        not exist already. Alternatively, the tables can be created manually
+        from the SQL statements found in the mtrlogobserver.py source file.
+
+    test_type
+    test_info
+        Two descriptive strings that will be inserted in the database tables if
+        dbpool is specified."""
+
     def __init__(self, dbpool=None, test_type="mysql-test-run", test_info="",
                  autoCreateTables=False, textLimit=5, testNameLimit=16,
                  parallel=4, logfiles = {}, lazylogfiles = True, **kwargs):
@@ -211,7 +285,7 @@ class MTR(Test):
                                            testNameLimit=self.testNameLimit)
         self.addLogObserver("stdio", self.myMtr)
         # Insert a row for this test run into the database and set up
-        # build ties, then start the command proper.
+        # build properties, then start the command proper.
         d = self.registerInDB()
         d.addCallback(self.afterRegisterInDB)
         d.addErrback(self.failed)
@@ -264,7 +338,6 @@ class MTR(Test):
         return self.runInteractionWithRetry(runQuery, *args, **kw)
 
     def registerInDB(self):
-        insert_id = 0
         if self.dbpool:
             return self.runInteractionWithRetry(self.doRegisterInDB)
         else:
