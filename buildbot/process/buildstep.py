@@ -325,7 +325,7 @@ class LoggedRemoteCommand(RemoteCommand):
             (activateCallBack, closeWhenFinished) = self.delayedLogs[logname]
             del self.delayedLogs[logname]
             loog = activateCallBack(self)
-            self.logs[logname] =loog
+            self.logs[logname] = loog
             self._closeWhenFinished[logname] = closeWhenFinished
 
         if logname in self.logs:
