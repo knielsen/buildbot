@@ -448,6 +448,8 @@ class Builder(pb.Referenceable):
             diffs.append('nextSlave changed from %s to %s' % (self.nextSlave, setup['nextSlave']))
         if setup.get('nextBuild') != self.nextBuild:
             diffs.append('nextBuild changed from %s to %s' % (self.nextBuild, setup['nextBuild']))
+        if setup.get('env', {}) != self.env:
+            diffs.append('env changed')
         return diffs
 
     def __repr__(self):
