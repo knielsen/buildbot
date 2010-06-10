@@ -104,17 +104,6 @@ class RunMixin:
         self.connectOneSlave(slavename, opts)
         return d
 
-    def connectSlaves(self, slavenames, builders):
-        dl = []
-        # initiate call for all of them, before waiting on result,
-        # otherwise we might miss some
-        for b in builders:
-            dl.append(self.master.botmaster.waitUntilBuilderAttached(b))
-        d = defer.DeferredList(dl)
-        for name in slavenames:
-            self.connectOneSlave(name)
-        return d
-
     def connectSlave2(self):
         # this takes over for bot1, so it has to share the slavename
         port = self.master.slavePort._port.getHost().port
@@ -222,15 +211,15 @@ class RunMixin:
     def _shutdownSlave_done(self, res, slavename):
         del self.slaves[slavename]
 
-    def killSlave(self):
+    def killSlave(self, slavename="bot1", buildername="dummy"):
         # the slave has died, its host sent a FIN. The .notifyOnDisconnect
         # callbacks will terminate the current step, so the build should be
         # flunked (no further steps should be started).
-        self.slaves['bot1'].bf.continueTrying = 0
-        bot = self.slaves['bot1'].getServiceNamed("bot")
-        broker = bot.builders["dummy"].remote.broker
+        self.slaves[slavename].bf.continueTrying = 0
+        bot = self.slaves[slavename].getServiceNamed("bot")
+        broker = bot.builders[buildername].remote.broker
         broker.transport.loseConnection()
-        del self.slaves['bot1']
+        del self.slaves[slavename]
 
     def disappearSlave(self, slavename="bot1", buildername="dummy",
                        allowReconnect=False):

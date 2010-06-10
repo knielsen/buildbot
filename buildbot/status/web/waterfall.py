@@ -417,9 +417,11 @@ class WaterfallStatusResource(HtmlResource):
     """This builds the main status page, with the waterfall display, and
     all child pages."""
 
-    def __init__(self, categories=None):
+    def __init__(self, categories=None, num_events=200, num_events_max=None):
         HtmlResource.__init__(self)
         self.categories = categories
+        self.num_events=num_events
+        self.num_events_max=num_events_max
         self.putChild("help", WaterfallHelp(categories))
 
     def getTitle(self, request):
@@ -572,7 +574,6 @@ class WaterfallStatusResource(HtmlResource):
 
         data += "</table>\n"
 
-        data += '<hr /><div class="footer">\n'
 
         def with_args(req, remove_args=[], new_args=[], new_path=None):
             # sigh, nevow makes this sort of manipulation easier
@@ -610,32 +611,13 @@ class WaterfallStatusResource(HtmlResource):
         helppage = with_args(request, new_path=helpurl)
         data += '[<a href="%s">help</a>]\n' % helppage
 
-        welcomeurl = self.path_to_root(request) + "index.html"
-        data += '[<a href="%s">welcome</a>]\n' % welcomeurl
-
         if self.get_reload_time(request) is not None:
             no_reload_page = with_args(request, remove_args=["reload"])
             data += '[<a href="%s">Stop Reloading</a>]\n' % no_reload_page
 
         data += "<br />\n"
+	data += self.footer(status, request)
 
-
-        bburl = "http://buildbot.net/?bb-ver=%s" % urllib.quote(version)
-        data += '<a href="%s">Buildbot-%s</a> ' % (bburl, version)
-        if projectName:
-            data += "working for the "
-            if projectURL:
-                data += '<a href="%s">%s</a> project.' % (projectURL,
-                                                            projectName)
-            else:
-                data += "%s project." % projectName
-        data += "<br />\n"
-        # TODO: push this to the right edge, if possible
-        data += ("Page built: " +
-                 time.strftime("%a %d %b %Y %H:%M:%S",
-                               time.localtime(util.now()))
-                 + "\n")
-        data += '</div>\n'
         return data
 
     def body0(self, request, builders):
@@ -699,7 +681,11 @@ class WaterfallStatusResource(HtmlResource):
         else:
             minTime = None
         spanLength = 10  # ten-second chunks
-        maxPageLen = int(request.args.get("num_events", [200])[0])
+        req_events=int(request.args.get("num_events", [self.num_events])[0])
+        if self.num_events_max and req_events > self.num_events_max:
+            maxPageLen = self.num_events_max
+        else:
+            maxPageLen = req_events
 
         # first step is to walk backwards in time, asking each column
         # (commit, all builders) if they have any events there. Build up the

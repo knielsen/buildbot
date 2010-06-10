@@ -2,7 +2,7 @@
 
 from twisted.internet.defer import Deferred
 from twisted.spread import pb
-import time, re
+import time, re, string
 
 def naturalSort(l):
     """Returns a sorted copy of l, so that numbers in strings are sorted in the
@@ -109,3 +109,25 @@ def to_text(s):
         return s
     else:
         return str(s)
+
+# Remove potentially harmful characters from builder name if it is to be
+# used as the build dir.
+badchars_map = string.maketrans("\t !#$%&'()*+,./:;<=>?@[\\]^{|}~",
+                                "______________________________")
+def safeTranslate(str):
+    if isinstance(str, unicode):
+        str = str.encode('utf8')
+    return str.translate(badchars_map)
+
+def remove_userpassword(url):
+    if '@' not in url:
+        return url
+    if '://' not in url:
+        return url
+
+    # urlparse would've been nice, but doesn't support ssh... sigh    
+    protocol_url = url.split('://')
+    protocol = protocol_url[0]
+    repo_url = protocol_url[1].split('@')[-1]
+
+    return protocol + '://' + repo_url

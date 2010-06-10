@@ -1,4 +1,5 @@
 # -*- test-case-name: buildbot.test.test_vc -*-
+# -*- coding: utf-8 -*-
 
 import sys, os, time, re
 from email.Utils import mktime_tz, parsedate_tz
@@ -56,6 +57,7 @@ config_vc = """
 from buildbot.process import factory
 from buildbot.steps import source
 from buildbot.buildslave import BuildSlave
+from buildbot.config import BuilderConfig
 s = factory.s
 
 f1 = factory.BuildFactory([
@@ -64,8 +66,9 @@ f1 = factory.BuildFactory([
 c = {}
 c['slaves'] = [BuildSlave('bot1', 'sekrit')]
 c['schedulers'] = []
-c['builders'] = [{'name': 'vc', 'slavename': 'bot1',
-                  'builddir': 'vc-dir', 'factory': f1}]
+c['builders'] = [
+    BuilderConfig(name='vç', slavename='bot1', factory=f1, builddir='vc-dir'),
+]
 c['slavePortnum'] = 0
 # do not compress logs in tests
 c['logCompressionLimit'] = False
@@ -85,7 +88,7 @@ diff -u -r1.1.1.1 subdir.c
  main(int argc, const char *argv[])
  {
 -    printf("Hello subdir.\n");
-+    printf("Hello patched subdir.\n");
++    printf("HellÒ patched subdir.\n");
      return 0;
  }
 """
@@ -107,7 +110,7 @@ TRY_PATCH = '''
  main(int argc, const char *argv[])
  {
 -    printf("Hello subdir.\\n");
-+    printf("Hello try.\\n");
++    printf("HÉllo try.\\n");
      return 0;
  }
 '''
@@ -429,7 +432,7 @@ class VCBase(SignalMixin):
                                self.slavebase, keepalive=0, usePTY=False)
         self.slave = slave
         slave.startService()
-        d = self.master.botmaster.waitUntilBuilderAttached("vc")
+        d = self.master.botmaster.waitUntilBuilderAttached("vç")
         return d
 
     def loadConfig(self, config):
@@ -438,7 +441,7 @@ class VCBase(SignalMixin):
         # to stop and restart the slave.
         d = defer.succeed(None)
         if self.slave:
-            d = self.master.botmaster.waitUntilBuilderDetached("vc")
+            d = self.master.botmaster.waitUntilBuilderDetached("vç")
             self.slave.stopService()
         d.addCallback(lambda res: self.master.loadConfig(config))
         d.addCallback(lambda res: self.connectSlave())
@@ -459,7 +462,7 @@ class VCBase(SignalMixin):
         #print "doBuild(ss: b=%s rev=%s)" % (ss.branch, ss.revision)
         req = base.BuildRequest("test_vc forced build", ss, 'test_builder')
         d = req.waitUntilFinished()
-        c.getBuilder("vc").requestBuild(req)
+        c.getBuilder("vç").requestBuild(req)
         d.addCallback(self._doBuild_1, shouldSucceed)
         return d
     def _doBuild_1(self, bs, shouldSucceed):
@@ -567,6 +570,9 @@ class VCBase(SignalMixin):
         self.failUnlessEqual(bs.getProperty("branch"), None)
         self.checkGotRevisionIsLatest(bs)
 
+        # Check that we can handle unfriendly permissions.
+        os.chmod(os.path.join(self.workdir, "subdir"), 0)
+        # Check that clobber really clobbers any old stuff.
         self.touch(self.workdir, "newfile")
         self.shouldExist(self.workdir, "newfile")
         d = self.doBuild() # rebuild clobbers workdir
@@ -771,7 +777,7 @@ class VCBase(SignalMixin):
         subdir_c = os.path.join(self.slavebase, "vc-dir", "build",
                                 "subdir", "subdir.c")
         data = open(subdir_c, "r").read()
-        self.failUnlessIn("Hello patched subdir.\\n", data)
+        self.failUnlessIn("HellÒ patched subdir.\\n", data)
         self.failUnlessEqual(bs.getProperty("revision"),
                              self.helper.trunk[-1] or None)
         self.checkGotRevision(bs, self.helper.trunk[-1])
@@ -810,7 +816,7 @@ class VCBase(SignalMixin):
         subdir_c = os.path.join(self.slavebase, "vc-dir", "build",
                                 "subdir", "subdir.c")
         data = open(subdir_c, "r").read()
-        self.failUnlessIn("Hello patched subdir.\\n", data)
+        self.failUnlessIn("HellÒ patched subdir.\\n", data)
         self.failUnlessEqual(bs.getProperty("revision"),
                              self.helper.trunk[-2] or None)
         self.checkGotRevision(bs, self.helper.trunk[-2])
@@ -829,7 +835,7 @@ class VCBase(SignalMixin):
         subdir_c = os.path.join(self.slavebase, "vc-dir", "build",
                                 "subdir", "subdir.c")
         data = open(subdir_c, "r").read()
-        self.failUnlessIn("Hello patched subdir.\\n", data)
+        self.failUnlessIn("HellÒ patched subdir.\\n", data)
         self.failUnlessEqual(bs.getProperty("revision"),
                              self.helper.branch[-1] or None)
         self.failUnlessEqual(bs.getProperty("branch"), self.helper.branchname or None)
@@ -1073,7 +1079,7 @@ class VCBase(SignalMixin):
         self.tearDownSignalHandler()
         d = defer.succeed(None)
         if self.slave:
-            d2 = self.master.botmaster.waitUntilBuilderDetached("vc")
+            d2 = self.master.botmaster.waitUntilBuilderDetached("vç")
             d.addCallback(lambda res: self.slave.stopService())
             d.addCallback(lambda res: d2)
         if self.master:
@@ -3149,45 +3155,6 @@ class Git(VCBase, unittest.TestCase):
         d = self.do_getpatch()
         return d
 
-    # The git tests override parts of the test sequence to demonstrate
-    # different update behavior.  In the git cases, we always
-    # effectively have a clobbered tree.
-
-    def _do_vctest_update_3(self, bs):
-        log.msg("_do_vctest_update_3")
-        self.shouldExist(self.workdir, "main.c")
-        self.shouldExist(self.workdir, "version.c")
-        self.shouldContain(self.workdir, "version.c",
-                           "version=%d" % self.helper.version)
-        self.failUnlessEqual(bs.getProperty("revision"), None)
-        self.checkGotRevisionIsLatest(bs)
-
-        # now "update" to an older revision
-        d = self.doBuild(ss=SourceStamp(revision=self.helper.trunk[-2]))
-        d.addCallback(self._do_vctest_update_4)
-        return d
-
-    def _do_vctest_copy_2(self, bs):
-        log.msg("_do_vctest_copy 3")
-        if self.metadir:
-            self.shouldExist(self.workdir, self.metadir)
-        self.shouldNotExist(self.workdir, "newfile")
-        self.failUnlessEqual(bs.getProperty("revision"), None)
-        self.checkGotRevisionIsLatest(bs)
-        self.touch(self.workdir, "newfile")
-
-    def _doBranch_3(self, bs):
-        log.msg("_doBranch_3")
-        # make sure it is still on the branch
-        main_c = os.path.join(self.slavebase, "vc-dir", "build", "main.c")
-        data = open(main_c, "r").read()
-        self.failUnlessIn("Hello branch.", data)
-
-        # now make sure that a non-branch checkout clobbers the tree
-        d = self.doBuild(ss=SourceStamp())
-        d.addCallback(self._doBranch_4)
-        return d
-
 VCS.registerVC(Git.vc_name, GitHelper())
 
 
@@ -3303,4 +3270,4 @@ class Patch(VCBase, unittest.TestCase):
         # make sure the file actually got patched
         subdir_c = os.path.join(self.workdir, "subdir", "subdir.c")
         data = open(subdir_c, "r").read()
-        self.failUnlessIn("Hello patched subdir.\\n", data)
+        self.failUnlessIn("HellÒ patched subdir.\\n", data)

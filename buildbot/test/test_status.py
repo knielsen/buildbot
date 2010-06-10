@@ -198,7 +198,7 @@ class Mail(unittest.TestCase):
                                            "recip2@example.com"],
                           lookup=mail.Domain("dev.com"))
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
 
         b1 = self.makeBuild(3, builder.SUCCESS)
@@ -223,7 +223,7 @@ class Mail(unittest.TestCase):
                           lookup="dev.com",
                           sendToInterestedUsers=False)
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
 
         b1 = self.makeBuild(3, builder.SUCCESS)
@@ -251,7 +251,7 @@ class Mail(unittest.TestCase):
                           categories=["debug"])
 
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
 
         b1 = self.makeBuild(3, builder.SUCCESS)
@@ -284,11 +284,11 @@ class Mail(unittest.TestCase):
         builderd = MyBuilder("builder2", "debug")
 
         mailer1.parent = self
-        mailer1.status = self
+        mailer1.master_status = self
         mailer2.parent = self
-        mailer2.status = self
+        mailer2.master_status = self
         mailer3.parent = self
-        mailer3.status = self
+        mailer3.master_status = self
         self.messages = []
 
         t = mailer1.builderAdded("builder2", builderd)
@@ -322,7 +322,7 @@ class Mail(unittest.TestCase):
                           lookup=MyLookup(),
                           customMesg=customTextMailMessage)
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
 
         b1 = self.makeBuild(4, builder.FAILURE)
@@ -357,7 +357,7 @@ class Mail(unittest.TestCase):
                           lookup=MyLookup(),
                           customMesg=customHTMLMailMessage)
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
 
         b1 = self.makeBuild(4, builder.FAILURE)
@@ -407,7 +407,7 @@ class Mail(unittest.TestCase):
 
         mailer = MyMailer(fromaddr="buildbot@example.com", addPatch=True)
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
         mailer.buildFinished("builder1", b1, b1.results)
         m,r = self.messages.pop()
@@ -416,7 +416,7 @@ class Mail(unittest.TestCase):
 
         mailer = MyMailer(fromaddr="buildbot@example.com", addPatch=False)
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
         mailer.buildFinished("builder1", b1, b1.results)
         m,r = self.messages.pop()
@@ -425,7 +425,7 @@ class Mail(unittest.TestCase):
 
         mailer = MyMailer(fromaddr="buildbot@example.com")
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
         mailer.buildFinished("builder1", b1, b1.results)
         m,r = self.messages.pop()
@@ -439,7 +439,7 @@ class Mail(unittest.TestCase):
                                            "recip2@example.com"],
                           lookup=MyLookup())
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
 
         b1 = self.makeBuild(3, builder.SUCCESS)
@@ -471,7 +471,7 @@ class Mail(unittest.TestCase):
                           extraRecipients=["bah@bah.bah"],
                           lookup=MyLookup())
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
         
         b1 = self.makeBuild(1, builder.SUCCESS)
@@ -509,7 +509,7 @@ class Mail(unittest.TestCase):
                           extraRecipients=["recip@example.com",
                                            "recip2@example.com"])
         mailer.parent = self
-        mailer.status = self
+        mailer.master_status = self
         self.messages = []
 
         b1 = self.makeBuild(3, builder.WARNINGS)
@@ -547,7 +547,7 @@ class Mail(unittest.TestCase):
                                    extraRecipients=[dest])
         s = MyStatus()
         s.url = "project URL"
-        mailer.status = s
+        mailer.master_status = s
 
         b1 = self.makeBuild(3, builder.SUCCESS)
         b1.testlogs = [MyLog(basedir, 'compile', "Compile log here\n"),
@@ -992,6 +992,7 @@ config_base = """
 from buildbot.process import factory
 from buildbot.steps import dummy
 from buildbot.buildslave import BuildSlave
+from buildbot.config import BuilderConfig
 s = factory.s
 
 f1 = factory.QuickBuildFactory('fakerep', 'cvsmodule', configure=None)
@@ -1004,17 +1005,18 @@ f2 = factory.BuildFactory([
 BuildmasterConfig = c = {}
 c['slaves'] = [BuildSlave('bot1', 'sekrit')]
 c['schedulers'] = []
-c['builders'] = []
-c['builders'].append({'name':'quick', 'slavename':'bot1',
-                      'builddir': 'quickdir', 'factory': f1})
+c['builders'] = [
+    BuilderConfig(name='quick', slavename='bot1', factory=f1),
+]
 c['slavePortnum'] = 0
 """
 
 config_2 = config_base + """
-c['builders'] = [{'name': 'dummy', 'slavename': 'bot1',
-                  'builddir': 'dummy1', 'factory': f2},
-                 {'name': 'testdummy', 'slavename': 'bot1',
-                  'builddir': 'dummy2', 'factory': f2, 'category': 'test'}]
+c['builders'] = [
+    BuilderConfig(name='dummy', slavename='bot1', factory=f2),
+    BuilderConfig(name='testdummy', slavename='bot1',
+                  factory=f2, category='test'),
+]
 """
 
 class STarget(base.StatusReceiver):

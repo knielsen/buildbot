@@ -16,6 +16,7 @@ config_base = """
 from buildbot.process import factory
 from buildbot.steps import dummy
 from buildbot.buildslave import BuildSlave
+from buildbot.config import BuilderConfig
 s = factory.s
 
 f1 = factory.QuickBuildFactory('fakerep', 'cvsmodule', configure=None)
@@ -28,10 +29,10 @@ f2 = factory.BuildFactory([
 BuildmasterConfig = c = {}
 c['slaves'] = [BuildSlave('bot1', 'sekrit')]
 c['schedulers'] = []
-c['builders'] = []
-c['builders'].append({'name':'quick', 'slavename':'bot1',
-                      'builddir': 'quickdir', 'factory': f1,
-                      'slavebuilddir': 'slavequickdir'})
+c['builders'] = [
+    BuilderConfig(name='quick', slavename='bot1', factory=f1,
+        builddir='quickdir', slavebuilddir='slavequickdir'),
+]
 c['slavePortnum'] = 0
 """
 
@@ -47,8 +48,10 @@ c['slaves'] = [ BuildSlave('bot1', 'sekrit') ]
 from buildbot.scheduler import Scheduler
 c['schedulers'] = [Scheduler('dummy', None, 0.1, ['dummy'])]
 
-c['builders'] = [{'name': 'dummy', 'slavename': 'bot1',
-                  'builddir': 'dummy1', 'factory': f2}]
+c['builders'] = [
+    BuilderConfig(name='dummy', slavename='bot1',
+                  factory=f2, builddir='dummy1'),
+]
 """
 
 config_cant_build = config_can_build + """
@@ -64,40 +67,50 @@ c['slaves'] = [ BuildSlave('bot1', 'sekrit', max_builds=1) ]
 from buildbot.scheduler import Scheduler
 c['schedulers'] = [Scheduler('dummy', None, 0.1, ['dummy', 'dummy2'])]
 
-c['builders'].append({'name': 'dummy', 'slavename': 'bot1',
-                      'factory': f2})
-c['builders'].append({'name': 'dummy2', 'slavename': 'bot1',
-                      'builddir': 'dummy2', 'factory': f2})
+c['builders'] = c['builders'] + [
+    BuilderConfig(name='dummy', slavename='bot1', factory=f2),
+    BuilderConfig(name='dummy2', slavename='bot1', factory=f2),
+]
 """
 
 config_2 = config_base + """
-c['builders'] = [{'name': 'dummy', 'slavename': 'bot1',
-                  'builddir': 'dummy1', 'factory': f2},
-                 {'name': 'test dummy', 'slavename': 'bot1',
-                  'factory': f2, 'category': 'test'}]
+c['builders'] = [
+    BuilderConfig(name='dummy', slavename='bot1',
+                  builddir='dummy1', factory=f2),
+    BuilderConfig(name='test dummy', slavename='bot1',
+                  factory=f2, category='test'),
+]
 """
 
 config_3 = config_2 + """
-c['builders'].append({'name': 'adummy', 'slavename': 'bot1',
-                      'builddir': 'adummy3', 'factory': f2})
-c['builders'].append({'name': 'bdummy', 'slavename': 'bot1',
-                      'builddir': 'adummy4', 'factory': f2,
-                      'category': 'test'})
+c['builders'] = c['builders'] + [
+    BuilderConfig(name='adummy', slavename='bot1',
+                  builddir='adummy3', factory=f2),
+    BuilderConfig(name='bdummy', slavename='bot1',
+                  builddir='adummy4', factory=f2,
+                  category='test'),
+]
 """
 
 config_4 = config_base + """
-c['builders'] = [{'name': 'dummy', 'slavename': 'bot1',
-                  'slavebuilddir': 'sdummy', 'factory': f2}]
+c['builders'] = [
+    BuilderConfig(name='dummy', slavename='bot1',
+                  slavebuilddir='sdummy', factory=f2),
+]
 """
 
 config_4_newbasedir = config_4 + """
-c['builders'] = [{'name': 'dummy', 'slavename': 'bot1',
-                  'builddir': 'dummy2', 'factory': f2}]
+c['builders'] = [
+    BuilderConfig(name='dummy', slavename='bot1',
+                  builddir='dummy2', factory=f2),
+]
 """
 
 config_4_newbuilder = config_4_newbasedir + """
-c['builders'].append({'name': 'dummy2', 'slavename': 'bot1',
-                      'builddir': 'dummy23', 'factory': f2})
+c['builders'] = c['builders'] + [
+    BuilderConfig(name='dummy2', slavename='bot1',
+                  builddir='dummy23', factory=f2),
+]
 """
 
 class Run(unittest.TestCase):
@@ -227,7 +240,7 @@ class Ping(RunMixin, unittest.TestCase):
         return d
 
     def _testPing_1(self, res):
-        d = interfaces.IControl(self.master).getBuilder("dummy").ping(1)
+        d = interfaces.IControl(self.master).getBuilder("dummy").ping()
         d.addCallback(self._testPing_2)
         return d
 
@@ -317,13 +330,13 @@ class Disconnect(RunMixin, unittest.TestCase):
         # forcing a build will work: the build detect that the slave is no
         # longer available and will be re-queued. Wait 5 seconds, then check
         # to make sure the build is still in the 'waiting for a slave' queue.
-        self.control.getBuilder("dummy").original.START_BUILD_TIMEOUT = 1
         req = BuildRequest("forced build", SourceStamp(), "test_builder")
         self.failUnlessEqual(req.startCount, 0)
         self.control.getBuilder("dummy").requestBuild(req)
-        # this should ping the slave, which doesn't respond, and then give up
-        # after a second. The BuildRequest will be re-queued, and its
-        # .startCount will be incremented.
+        # this should ping the slave, which doesn't respond (and eventually
+        # times out). The BuildRequest will be re-queued, and its .startCount
+        # will be incremented.
+        self.killSlave()
         d = defer.Deferred()
         d.addCallback(self._testIdle2_1, req)
         reactor.callLater(3, d.callback, None)
@@ -473,7 +486,7 @@ class Disconnect(RunMixin, unittest.TestCase):
         bc = self.control.getBuilder("dummy")
 
         # ping should succeed
-        d = bc.ping(1)
+        d = bc.ping()
         d.addCallback(self._testDisappear_1, bc)
         return d
 
@@ -483,8 +496,9 @@ class Disconnect(RunMixin, unittest.TestCase):
         # now, before any build is run, make the slave disappear
         self.disappearSlave(allowReconnect=False)
 
-        # at this point, a ping to the slave should timeout
-        d = bc.ping(1)
+        # initiate the ping and then kill the slave, to simulate a disconnect.
+        d = bc.ping()
+        self.killSlave()
         d.addCallback(self. _testDisappear_2)
         return d
     def _testDisappear_2(self, res):

@@ -6,7 +6,6 @@ try:
     import signal
 except ImportError:
     pass
-import string
 from cPickle import load
 import warnings
 
@@ -21,7 +20,7 @@ from twisted.persisted import styles
 
 import buildbot
 # sibling imports
-from buildbot.util import now
+from buildbot.util import now, safeTranslate
 from buildbot.pbutil import NewCredPerspective
 from buildbot.process.builder import Builder, IDLE
 from buildbot.process.base import BuildRequest
@@ -31,6 +30,7 @@ from buildbot.sourcestamp import SourceStamp
 from buildbot.buildslave import BuildSlave
 from buildbot import interfaces, locks
 from buildbot.process.properties import Properties
+from buildbot.config import BuilderConfig
 
 ########################################
 
@@ -523,6 +523,7 @@ class BuildMaster(service.MultiService):
                       "buildbotURL", "properties", "prioritizeBuilders",
                       "eventHorizon", "buildCacheSize", "logHorizon", "buildHorizon",
                       "changeHorizon", "logMaxSize", "logMaxTailSize",
+                      "logCompressionMethod",
                       )
         for k in config.keys():
             if k not in known_keys:
@@ -532,13 +533,6 @@ class BuildMaster(service.MultiService):
             # required
             schedulers = config['schedulers']
             builders = config['builders']
-            for k in builders:
-                if k['name'].startswith("_"):
-                    errmsg = ("builder names must not start with an "
-                              "underscore: " + k['name'])
-                    log.err(errmsg)
-                    raise ValueError(errmsg)
-
             slavePortnum = config['slavePortnum']
             #slaves = config['slaves']
             #change_source = config['change_source']
@@ -559,6 +553,9 @@ class BuildMaster(service.MultiService):
             if logCompressionLimit is not None and not \
                     isinstance(logCompressionLimit, int):
                 raise ValueError("logCompressionLimit needs to be bool or int")
+            logCompressionMethod = config.get('logCompressionMethod', "bz2")
+            if logCompressionMethod not in ('bz2', 'gz'):
+                raise ValueError("logCompressionMethod needs to be 'bz2', or 'gz'")
             logMaxSize = config.get('logMaxSize')
             if logMaxSize is not None and not \
                     isinstance(logMaxSize, int):
@@ -643,12 +640,19 @@ class BuildMaster(service.MultiService):
         slavenames = [s.slavename for s in slaves]
         buildernames = []
         dirnames = []
-        badchars_map = string.maketrans("\t !#$%&'()*+,./:;<=>?@[\\]^{|}~",
-                                        "______________________________")
+
+        # convert builders from objects to config dictionaries
+        builders_dicts = []
         for b in builders:
-            if type(b) is tuple:
-                raise ValueError("builder %s must be defined with a dict, "
-                                 "not a tuple" % b[0])
+            if isinstance(b, BuilderConfig):
+                builders_dicts.append(b.getConfigDict())
+            elif type(b) is dict:
+                builders_dicts.append(b)
+            else:
+                raise ValueError("builder %s is not a BuilderConfig object (or a dict)" % b)
+        builders = builders_dicts
+
+        for b in builders:
             if b.has_key('slavename') and b['slavename'] not in slavenames:
                 raise ValueError("builder %s uses undefined slave %s" \
                                  % (b['name'], b['slavename']))
@@ -661,9 +665,18 @@ class BuildMaster(service.MultiService):
                                  % b['name'])
             buildernames.append(b['name'])
 
-            # Fix the dictionnary with default values.
-            b.setdefault('builddir', b['name'].translate(badchars_map))
+            # sanity check name (BuilderConfig does this too)
+            if b['name'].startswith("_"):
+                errmsg = ("builder names must not start with an "
+                          "underscore: " + b['name'])
+                log.err(errmsg)
+                raise ValueError(errmsg)
+
+            # Fix the dictionnary with default values, in case this wasn't
+            # specified with a BuilderConfig object (which sets the same defaults)
+            b.setdefault('builddir', safeTranslate(b['name']))
             b.setdefault('slavebuilddir', b['builddir'])
+
             if b['builddir'] in dirnames:
                 raise ValueError("builder %s reuses builddir %s"
                                  % (b['name'], b['builddir']))
@@ -743,6 +756,7 @@ class BuildMaster(service.MultiService):
         self.properties.update(properties, self.configFileName)
 
         self.status.logCompressionLimit = logCompressionLimit
+        self.status.logCompressionMethod = logCompressionMethod
         self.status.logMaxSize = logMaxSize
         self.status.logMaxTailSize = logMaxTailSize
         # Update any of our existing builders with the current log parameters.
@@ -750,6 +764,7 @@ class BuildMaster(service.MultiService):
         # reconfig.
         for builder in self.botmaster.builders.values():
             builder.builder_status.setLogCompressionLimit(logCompressionLimit)
+            builder.builder_status.setLogCompressionMethod(logCompressionMethod)
             builder.builder_status.setLogMaxSize(logMaxSize)
             builder.builder_status.setLogMaxTailSize(logMaxTailSize)
 

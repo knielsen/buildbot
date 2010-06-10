@@ -1,7 +1,7 @@
 \input texinfo @c -*-texinfo-*-
 @c %**start of header
 @setfilename buildbot.info
-@settitle BuildBot Manual 0.7.11
+@settitle BuildBot Manual 0.7.12
 @defcodeindex cs
 @defcodeindex sl
 @defcodeindex bf
@@ -22,7 +22,7 @@
 @copying
 This is the BuildBot manual.
 
-Copyright (C) 2005,2006 Brian Warner
+Copyright (C) 2005, 2006, 2009, 2010 Brian Warner
 
 Copying and distribution of this file, with or without
 modification, are permitted in any medium without royalty
@@ -418,11 +418,10 @@ decision making, where the overhead of sending a lot of commands back
 and forth would be inappropriate, but in general the buildmaster is
 responsible for everything).
 
-The buildmaster is usually fed @code{Changes} by some sort of version
-control system (@pxref{Change Sources}), which may cause builds to be
-run. As the builds are performed, various status messages are
-produced, which are then sent to any registered Status Targets
-(@pxref{Status Delivery}).
+The buildmaster is usually fed @code{Changes} by some sort of version control
+system (@pxref{Change Sources}), which may cause builds to be run. As the
+builds are performed, various status messages are produced, which are then sent
+to any registered Status Targets (@pxref{Status Delivery}).
 
 @c @image{FILENAME, WIDTH, HEIGHT, ALTTEXT, EXTENSION}
 @image{images/overview,,,Overview Diagram,}
@@ -958,6 +957,10 @@ the host: OS, version, memory size, CPU speed, versions of relevant
 libraries installed, and finally the version of the buildbot code
 which is running the buildslave.
 
+The optional @file{BASEDIR/info/access_uri} can specify a URI which will
+connect a user to the machine.  Many systems accept @code{ssh://hostname} URIs
+for this purpose.
+
 If you run many buildslaves, you may want to create a single
 @file{~buildslave/info} file and share it among all the buildslaves
 with symlinks.
@@ -1040,6 +1043,13 @@ command:
 
 @example
 buildbot start @var{BASEDIR}
+@end example
+
+The @var{BASEDIR} is option and can be omitted if the current directory
+contains the buildbot configuration (the @file{buildbot.tac} file).
+
+@example
+buildbot start
 @end example
 
 This command will start the daemon and then return, so normally it
@@ -1805,13 +1815,19 @@ the @emph{latest sources} of the same branch.
 
 @cindex Builder
 
-The @code{Builder} is a long-lived object which controls all Builds of
-a given type. Each one is created when the config file is first
-parsed, and lives forever (or rather until it is removed from the
-config file). It mediates the connections to the buildslaves that do
-all the work, and is responsible for creating the @code{Build} objects
-that decide @emph{how} a build is performed (i.e., which steps are
-executed in what order).
+The Buildmaster runs a collection of Builders, each of which handles a single
+type of build (e.g. full versus quick), on one or more build slaves.   Builders
+serve as a kind of queue for a particular type of build.  Each Builder gets a
+separate column in the waterfall display. In general, each Builder runs
+independently (although various kinds of interlocks can cause one Builder to
+have an effect on another).
+
+Each @code{Builder} is a long-lived object which controls a sequence of Builds.
+Each Builder is created when the config file is first parsed, and lives forever
+(or rather until it is removed from the config file). It mediates the
+connections to the buildslaves that do all the work, and is responsible for
+creating the @code{Build} objects that decide @emph{how} a build is performed
+(i.e., which steps are executed in what order).
 
 Each @code{Builder} gets a unique name, and the path name of a
 directory where it gets to do all its work (there is a
@@ -1828,28 +1844,20 @@ A @code{Builder} which is used to perform OS-X builds (as opposed to
 Linux or Solaris builds) should naturally be associated with an
 OS-X-based buildslave.
 
-A @code{Builder} may be given a set of environment variables to be used
-in its @pxref{ShellCommand}s. These variables will override anything in the
-buildslave's environment. Variables passed directly to a ShellCommand will
-override variables of the same name passed to the Builder.
+If multiple buildslaves are available for any given Builder, you will
+have some measure of redundancy: in case one slave goes offline, the
+others can still keep the Builder working. In addition, multiple
+buildslaves will allow multiple simultaneous builds for the same
+Builder, which might be useful if you have a lot of forced or ``try''
+builds taking place.
 
-For example, if you a pool of identical slaves it is often easier to manage
-variables like PATH from Buildbot rather than manually editing it inside of
-the slaves' environment.
-
-@example
-f = factory.BuildFactory
-f.addStep(ShellCommand(
-              command=['bash', './configure']))
-f.addStep(Compile())
-
-c['builders'] = [
-  @{'name': 'test', 'slavenames': ['slave1', 'slave2', 'slave3', 'slave4',
-                                   'slave5', 'slave6'],
-    'builddir': 'test', 'factory': f', 'slavebuilddir': 'test',
-    'env': @{'PATH': '/opt/local/bin:/opt/app/bin:/usr/local/bin:/usr/bin'@}@}
-
-@end example
+If you use this feature, it is important to make sure that the
+buildslaves are all, in fact, capable of running the given build. The
+slave hosts should be configured similarly, otherwise you will spend a
+lot of time trying (unsuccessfully) to reproduce a failure that only
+occurs on some of the buildslaves and not the others. Different
+platforms, operating systems, versions of major programs or libraries,
+all these things mean you should use separate Builders.
 
 @node Users, Build Properties, Builder, Concepts
 @section Users
@@ -2261,12 +2269,17 @@ available to queriers (over IRC) who want to find out where to get
 more information about this buildbot.
 
 @bcindex c['logCompressionLimit']
-The @code{logCompressionLimit} enables bz2-compression of build logs on
+The @code{logCompressionLimit} enables compression of build logs on
 disk for logs that are bigger than the given size, or disables that
 completely if given @code{False}. The default value is 4k, which should
 be a reasonable default on most file systems. This setting has no impact
 on status plugins, and merely affects the required disk space on the
 master for build logs.
+
+@bcindex c['logCompressionMethod']
+The @code{logCompressionMethod} controls what type of compression is used for
+build logs.  The default is 'bz2', the other valid option is 'gz'.  'bz2'
+offers better compression at the expense of more CPU time.
 
 @bcindex c['logMaxSize']
 The @code{logMaxSize} parameter sets an upper limit (in bytes) to how large
@@ -3283,19 +3296,20 @@ c['properties'] = @{
 
 @bcindex c['builders']
 
-The @code{c['builders']} key is a list of dictionaries which specify
-the Builders. The Buildmaster runs a collection of Builders, each of
-which handles a single type of build (e.g. full versus quick), on a
-single build slave. A Buildbot which makes sure that the latest code
-(``HEAD'') compiles correctly across four separate architecture will
-have four Builders, each performing the same build but on different
-slaves (one per platform).
+The @code{c['builders']} key is a list of objects giving configuration for the
+Builders.  For more information, @xref{Builder}.  The class definition for the
+builder configuration is in @code{buildbot.config}.  In the configuration file,
+its use looks like:
 
-Each Builder gets a separate column in the waterfall display. In
-general, each Builder runs independently (although various kinds of
-interlocks can cause one Builder to have an effect on another).
+@example
+from buildbot.config import BuilderConfig
+c['builders'] = [
+    BuilderConfig(name='quick', slavenames=['bot1', 'bot2'], factory=f_quick),
+    BuilderConfig(name='thorough', slavename='bot1', factory=f_thorough),
+]
+@end example
 
-Each Builder specification dictionary has several required keys:
+The constructor takes the following keyword arguments:
 
 @table @code
 @item name
@@ -3303,32 +3317,16 @@ This specifies the Builder's name, which is used in status
 reports.
 
 @item slavename
-This specifies which buildslave will be used by this Builder.
-@code{slavename} must appear in the @code{c['slaves']} list. Each
-buildslave can accomodate multiple Builders.
-
 @item slavenames
-If you provide @code{slavenames} instead of @code{slavename}, you can
-give a list of buildslaves which are capable of running this Builder.
-If multiple buildslaves are available for any given Builder, you will
-have some measure of redundancy: in case one slave goes offline, the
-others can still keep the Builder working. In addition, multiple
-buildslaves will allow multiple simultaneous builds for the same
-Builder, which might be useful if you have a lot of forced or ``try''
-builds taking place.
-
-If you use this feature, it is important to make sure that the
-buildslaves are all, in fact, capable of running the given build. The
-slave hosts should be configured similarly, otherwise you will spend a
-lot of time trying (unsuccessfully) to reproduce a failure that only
-occurs on some of the buildslaves and not the others. Different
-platforms, operating systems, versions of major programs or libraries,
-all these things mean you should use separate Builders.
+These arguments specify the buildslave or buildslaves that will be used by this
+Builder.  All slaves names must appear in the @code{c['slaves']} list. Each
+buildslave can accomodate multiple Builders.  The @code{slavenames} parameter
+can be a list of names, while @code{slavename} can specify only one slave.
 
 @item factory
 This is a @code{buildbot.process.factory.BuildFactory} instance which
 controls how the build is performed. Full details appear in their own
-chapter, @xref{Build Process}. Parameters like the location of the CVS
+section, @xref{Build Process}. Parameters like the location of the CVS
 repository and the compile-time options used for the build are
 generally provided as arguments to the factory's constructor.
 
@@ -3350,7 +3348,7 @@ Specifies the name of a subdirectory (under the base directory) in which
 everything related to this builder will be placed on the buildslave.
 This is where checkouts, compiles, and tests are run. If not set,
 defaults to @code{builddir}. If a slave is connected to multiple builders
-that shares the same @code{slavebuilddir}, make sure the slave is set to
+that share the same @code{slavebuilddir}, make sure the slave is set to
 run one build at a time or ensure this is fine to run multiple builds from
 the same directory simultaneously.
 
@@ -3380,6 +3378,33 @@ object which is assigning a new job, and a list of @code{BuildRequest}
 objects of pending builds. The function should return one of the
 @code{BuildRequest} objects, or @code{None} if none of the pending
 builds should be started.
+
+@item locks
+This argument specifies a list of locks that apply to this builder; @xref{Interlocks}.
+
+@item env
+A Builder may be given a dictionary of environment variables in this parameter.
+The variables are used in @pxref{ShellCommand} steps in builds created by this
+builder. The environment variables will override anything in the buildslave's
+environment. Variables passed directly to a @code{ShellCommand} will override
+variables of the same name passed to the Builder.
+
+For example, if you a pool of identical slaves it is often easier to manage
+variables like PATH from Buildbot rather than manually editing it inside of
+the slaves' environment.
+
+@example
+f = factory.BuildFactory
+f.addStep(ShellCommand(
+              command=['bash', './configure']))
+f.addStep(Compile())
+
+c['builders'] = [
+  BuilderConfig(name='test', factory=f,
+        slavenames=['slave1', 'slave2', 'slave3', 'slave4'],
+        env=@{'PATH': '/opt/local/bin:/opt/app/bin:/usr/local/bin:/usr/bin'@}),
+]
+@end example
 
 @end table
 
@@ -4830,6 +4855,14 @@ having WARNINGS. The remaining steps will still be executed.
 if True, this build step will always be run, even if a previous buildstep
 with @code{haltOnFailure=True} has failed.
 
+@item doStepIf
+A step can be configured to only run under certain conditions.  To do this, set
+the step's @code{doStepIf} to a boolean value, or to a function that returns a
+boolean value.  If the value or function result is false, then the step will
+return SKIPPED without doing anything.  Oherwise, the step will be executed
+normally.  If you set @code{doStepIf} to a function, that function should
+accept one parameter, which will be the @code{Step} object itself.
+
 @item locks
 a list of Locks (instances of @code{buildbot.locks.SlaveLock} or
 @code{buildbot.locks.MasterLock}) that should be acquired before
@@ -5203,23 +5236,40 @@ you should create the @code{SVN} step with the @code{baseURL} and
 name will be appended. It should probably end in a slash.
 
 @item defaultBranch
-this specifies the name of the branch to use when a Build does not
-provide one of its own. This will be appended to @code{baseURL} to
-create the string that will be passed to the @code{svn checkout}
-command.
+(optional): this specifies the name of the branch to use when a Build
+does not provide one of its own. This will be appended to
+@code{baseURL} to create the string that will be passed to the
+@code{svn checkout} command.
 
 @item username
-if specified, this will be passed to the @code{svn} binary with a
-@code{--username} option.
+(optional): if specified, this will be passed to the @code{svn}
+binary with a @code{--username} option.
 
 @item password
-if specified, this will be passed to the @code{svn} binary with a
-@code{--password} option.  The password itself will be suitably obfuscated in
-the logs.
+(optional): if specified, this will be passed to the @code{svn}
+binary with a @code{--password} option.  The password itself will be
+suitably obfuscated in the logs.
 
 @item extra_args
-if specified, an array of strings that will be passed as extra
-arguments to the @code{svn} binary.
+(optional): if specified, an array of strings that will be passed as
+extra arguments to the @code{svn} binary.
+
+@item keep_on_purge
+(optional): specific files or directories to keep between purges,
+like some build outputs that can be reused between builds.
+
+@item ignore_ignores
+(optional): when purging changes, don't use rules defined in
+svn:ignore properties and global-ignores in subversion/config.
+
+@item always_purge
+(optional): if set to True, always purge local changes after each
+build. This is everything that would appear in a @code{svn status}.
+
+@item depth
+(optional): Specify depth argument to achieve sparse checkout.  Only available if slave has Subversion 1.5 or higher.
+
+If set to "empty" updates will not pull in any files or subdirectories not already present. If set to "files", updates will pull in any files not already present, but not directories.  If set to "immediates", updates willl pull in any files or subdirectories not already present, the new subdirectories will have depth: empty.  If set to "infinity", updates will pull in any files or subdirectories not already present; the new subdirectories will have depth-infinity. Infinity is equivalent to SVN default update behavior, without specifying any depth argument.
 
 @end table
 
@@ -5560,6 +5610,11 @@ The Git step takes the following arguments:
 does not provide one of its own. If this this parameter is not
 specified, and the Build does not provide a branch, the ``master''
 branch will be used.
+
+@item ignore_ignores
+(optional): when purging changes, don't use .gitignore and
+.git/info/exclude.
+
 @end table
 
 
@@ -5586,15 +5641,6 @@ if you're running a batch file, the error level does not get propagated
 correctly unless you add 'call' before your batch file's name:
 @code{cmd=['call', 'myfile.bat', ...]}.
 
-All ShellCommands are run by default in the ``workdir'', which
-defaults to the ``@file{build}'' subdirectory of the slave builder's
-base directory. The absolute path of the workdir will thus be the
-slave's basedir (set as an option to @code{buildbot create-slave},
-@pxref{Creating a buildslave}) plus the builder's basedir (set in the
-builder's @code{c['builddir']} key in master.cfg) plus the workdir
-itself (a class-level attribute of the BuildFactory, defaults to
-``@file{build}'').
-
 @code{ShellCommand} arguments:
 
 @table @code
@@ -5606,6 +5652,23 @@ string (with embedded spaces) requires the buildslave to pass the
 string to /bin/sh for interpretation, which raises all sorts of
 difficult questions about how to escape or interpret shell
 metacharacters.
+
+@item workdir
+All ShellCommands are run by default in the ``workdir'', which
+defaults to the ``@file{build}'' subdirectory of the slave builder's
+base directory. The absolute path of the workdir will thus be the
+slave's basedir (set as an option to @code{buildbot create-slave},
+@pxref{Creating a buildslave}) plus the builder's basedir (set in the
+builder's @code{c['builddir']} key in master.cfg) plus the workdir
+itself (a class-level attribute of the BuildFactory, defaults to
+``@file{build}'').
+
+For example:
+
+@example
+f.addStep(ShellCommand(command=["make", "test"],
+                       workdir="build/tests"))
+@end example
 
 @item env
 a dictionary of environment strings which will be added to the child
@@ -7713,7 +7776,7 @@ default value is False, since it also allows anyone with a web browser to waste
 computing resources forcing unnecessary builds.
 
 If you do not wish to allow strangers to cause a build to run or to stop
-current builds, pass an instance of @code{status.web.authentication.IAuth} as a
+current builds, pass an instance of @code{status.web.auth.IAuth} as a
 @code{auth} keyword argument to @code{WebStatus}.  The class @code{BasicAuth}
 implements a basic authentication mechanism using a list of user/password
 tuples provided from the configuration file.  The class @code{HTPasswdAuth}
@@ -7721,11 +7784,11 @@ implements an authentication against an @file{.htpasswd} file.
 
 @example
 from buildbot.status.html import WebStatus
-from buildbot.status.web.authentication import BasicAuth
+from buildbot.status.web.auth import BasicAuth
 users = [('bob', 'secret-pass'), ('jill', 'super-pass')]
 c['status'].append(WebStatus(http_port=8080, auth=BasicAuth(users)))
 
-from buildbot.status.web.authentication import HTPasswdAuth
+from buildbot.status.web.auth import HTPasswdAuth
 file = '/path/to/file'
 c['status'].append(WebStatus(http_port=8080, auth=(HTPasswdAuth(file))))
 @end example
@@ -8101,60 +8164,112 @@ mn = MailNotifier(fromaddr="buildbot@@example.org",
                   extraRecipients=['listaddr@@example.org'])
 @end example
 
-In some cases it is desirable to have different information then what
-is provided in a standard MailNotifier message. For this purpose
-MailNotifier provides the argument customMesg (a function) which allows
-for the creation of messages with unique content.
+In some cases it is desirable to have different information then what is
+provided in a standard MailNotifier message. For this purpose MailNotifier
+provides the argument @code{messageFormatter} (a function) which allows for the
+creation of messages with unique content.
 
-For example it can be useful to display the last few lines of a log file
-and recent changes when a builder fails:
+For example, if only short emails are desired (e.g., for delivery to phones)
 
 @example
-def message(attrs):
-    logLines = 10
+from buildbot.status.builder import Results
+def messageFormatter(mode, name, build, results, master_status):
+    result = Results[results]
+
     text = list()
-    text.append("STATUS: %s" % attrs['result'].title())
-    text.append("")
-    text.extend([c.asText() for c in attrs['changes']])
-    text.append("")
-    name, url, lines, logstatus = attrs['logs'][-1]
-    text.append("Last %d lines of '%s':" % (logLines, name))
-    text.extend(["\t%s\n" % line for line in lines[len(lines)-logLines:]])
-    text.append("")
-    text.append("-buildbot")
-    return ("\n".join(text), 'plain')
+    text.append("STATUS: %s" % result.title())
+    return @{
+        'body' : "\n".join(text), 
+        'type' : 'plain'
+    @}
 
 mn = MailNotifier(fromaddr="buildbot@@example.org",
                   sendToInterestedUsers=False,
                   mode='problem',
                   extraRecipients=['listaddr@@example.org'],
-                  customMesg=message)
+                  messageFormatter=messageFormatter)
 @end example
 
-A customMesg function takes a single dict argument (see below) and returns a
-tuple of strings. The first string is the complete text of the message and the
-second is the message type ('plain' or 'html'). The 'html' type should be used
-when generating an HTML message:
+Another example of a function delivering a customized html email
+containing the last 80 lines of logs of a failing build step is given
+below:
 
 @example
-def message(attrs):
-    logLines = 10
+from buildbot.status.builder import Results
+
+def message_formatter(mode, name, build, results, master_status):
+    """Provide a customized message to BuildBot's MailNotifier.
+
+    The last 80 lines of the log are provided as well as the changes
+    relevant to the build.  Message content is formatted as html.
+    """
+    result = Results[results]
+
+    limit_lines = 80
     text = list()
-    text.append('<h4>Build status %s.</h4>' % (attrs['result'].title()))
-    if attrs['changes']:
+    text.append('<h4>Build status: %s</h4>' % result.upper())
+    text.append("Buildslave for this Build: <b>%s</b>" % build.getSlavename())
+    text.append('<br>')
+    if master_status.getURLForThing(build):
+        text.append('Complete logs for all build steps: <a href="%s">%s</a>'
+                    % (master_status.getURLForThing(build),
+                       master_status.getURLForThing(build))
+                    )
+    text.append('<br>')
+    text.append("Build Reason: %s" % build.getReason())
+    text.append('<br>')
+
+    source = ""
+    ss = build.getSourceStamp()
+    if ss.branch:
+        source += "[branch %s] " % ss.branch
+    if ss.revision:
+        source +=  ss.revision
+    else:
+        source += "HEAD"
+    if ss.patch:
+        source += " (plus patch)"
+    text.append("Build Source Stamp: <b>%s</b>" % source)
+    text.append('<br>')
+    text.append("Blamelist: %s" % ",".join(build.getResponsibleUsers()))
+    if ss.changes:
         text.append('<h4>Recent Changes:</h4>')
-        text.extend([c.asHTML() for c in attrs['changes']])
-    name, url, lines, logstatus = attrs['logs'][-1]
-    text.append('<h4>Last %d lines of "%s":</h4>' % (logLines, name))
+        text.extend([c.asHTML() for c in ss.changes])
+
+    logs = list()
+    for log in build.getLogs():
+        log_name = "%s.%s" % (log.getStep().getName(), log.getName())
+        log_status, dummy = log.getStep().getResults()
+        log_body = log.getText().splitlines() # Note: can be VERY LARGE
+        log_url = '%s/steps/%s/logs/%s' % (master_status.getURLForThing(build),
+                                           log.getStep().getName(),
+                                           log.getName())
+        logs.append((log_name, log_url, log_body, log_status))
+
+    name, url, content, logstatus = logs[-1]
+
+    text.append('<i>Detailed log of last build step:</i> <a href="%s">%s</a>'
+                % (url, url))
+    text.append('<br>')
+    text.append('<h4>Last %d lines of "%s":</h4>' % (limit_lines, name))
     text.append('<p>')
-    text.append('<br>'.join([line for line in lines[len(lines)-logLines:]]))
+    text.append('<br>'.join([line for line in
+                             content[len(content)-limit_lines:]]))
     text.append('</p>')
     text.append('<br><br>')
-    text.append('Full log at: %s' % url)
-    text.append('<br><br>')
-    text.append('<b>-buildbot</b>')
-    return ('\n'.join(text), 'html')
+    text.append('<b>-The BuildBot</b>')
+    return @{
+        'body': "\n".join(text),
+        'type': 'html'
+        @}
+
+mn = MailNotifier(fromaddr="buildbot@@example.org",
+                  sendToInterestedUsers=False,
+                  mode='failing',
+                  extraRecipients=['listaddr@@example.org'],
+                  messageFormatter=message_formatter)
 @end example
+
 
 @heading MailNotifier arguments
 
@@ -8227,47 +8342,64 @@ lookup='twistedmatrix.com' will allow mail to be sent to all
 developers whose SVN usernames match their twistedmatrix.com account
 names. See buildbot/status/mail.py for more details.
 
-@item customMesg
-This is a optional function that can be used to generate a custom mail
-message. The customMesg function takes a single dict and must return a
-tuple containing the message text and type ('html' or 'plain'). Below is a list
-of availale keys in the dict passed to customMesg:
+@item messageFormatter
 
-@table @code
-@item builderName
-(str) Name of the builder that generated this event.
-@item projectName
-(str) Name of the project.
-@item mode
-(str) Mode set in MailNotifier. (failing, passing, problem).
-@item result
-(str) Builder result as a string. 'success', 'warnings', 'failure', 'skipped', or 'exception'
-@item buildURL
-(str) URL to build page.
-@item buildbotURL
-(str) URL to buildbot main page.
-@item buildText
-(str) Build text from build.getText().
-@item buildProperties
-(Properties instance) Mapping of property names to values.
-@item slavename
-(str) Slavename.
-@item reason
-(str) Build reason from build.getReason().
-@item responsibleUsers
-(List of str) List of responsible users.
-@item branch
-(str) Name of branch used. If no SourceStamp exists branch
-is an empty string.
-@item revision
-(str) Name of revision used. If no SourceStamp exists revision
-is an empty string.
-@item patch
-(str) Name of patch used. If no SourceStamp exists patch
-is an empty string.
-@item changes
-(list of objs) List of change objects from SourceStamp. A change
-object has the following useful information:
+This is a optional function that can be used to generate a custom mail message.
+A @code{messageFormatter} function takes the mail mode (@code{mode}), builder
+name (@code{name}), the build status (@code{build}), the result code
+(@code{results}), and the BuildMaster status (@code{master_status}).  It
+returns a dictionary. The @code{body} key gives a string that is the complete
+text of the message. The @code{type} key is the message type ('plain' or
+'html'). The 'html' type should be used when generating an HTML message.  The
+@code{subject} key is optional, but gives the subject for the email.
+
+@item extraHeaders
+(dictionary) A dictionary containing key/value pairs of extra headers to add
+to sent e-mails. Both the keys and the values may be a WithProperties instance.
+
+@end table
+
+As a help to those writing @code{messageFormatter} functions, the following
+table describes how to get some useful pieces of information from the various
+status objects:
+
+@table @bullet
+@item Name of the builder that generated this event
+@code{name}
+@item Name of the project
+@code{master_status.getProjectName()}
+@item MailNotifier mode
+@code{mode} (one of @code{all, failing, problem, change, passing})
+@item Builder result as a string
+@example
+from buildbot.status.builder import Results
+result_str = Results[results]
+# one of 'success', 'warnings', 'failure', 'skipped', or 'exception'
+@end example
+@item URL to build page
+@code{master_status.getURLForThing(build)}
+@item URL to buildbot main page.
+@code{master_status.getBuildbotURL()}
+@item Build text
+@code{build.getText()}
+@item Mapping of property names to values
+@code{build.getProperties()} (a @code{Properties} instance)
+@item Slave name
+@code{build.getSlavename()}
+@item Build reason (from a forced build)
+@code{build.getReason()}
+@item List of responsible users
+@code{build.getResponsibleUsers()}
+@item Source information (only valid if ss is not None)
+@example
+ss = build.getSourceStamp()
+if ss:
+    branch = ss.branch
+    revision = ss.revision
+    patch = ss.patch
+    changes = ss.changes # list
+@end example
+A change object has the following useful information:
 @table @code
 @item who
 (str) who made this change
@@ -8282,18 +8414,20 @@ object has the following useful information:
 @item comments
 (str) comments reguarding the change.
 @end table
-The functions asText and asHTML return a list of strings with
+The @code{Change} methods asText and asHTML return a list of strings with
 the above information formatted.
-@item logs
-(List of Tuples) List of tuples where each tuple contains the log name, log url,
-log contents as a list of strings, and the status of the corresponding build step,
-i.e. SUCCESS, WARNING, or FAILURE.
-@end table
-
-@item extraHeaders
-(dictionary) A dictionary containing key/value pairs of extra headers to add
-to sent e-mails. Both the keys and the values may be a WithProperties instance.
-
+@item Log information
+@example
+logs = list()
+for log in build.getLogs():
+    log_name = "%s.%s" % (log.getStep().getName(), log.getName())
+    log_status, dummy = log.getStep().getResults()
+    log_body = log.getText().splitlines() # Note: can be VERY LARGE
+    log_url = '%s/steps/%s/logs/%s' % (master_status.getURLForThing(build),
+                                       log.getStep().getName(),
+                                       log.getName())
+    logs.append((log_name, log_url, log_body, log_status))
+@end example
 @end table
 
 @node IRC Bot, PBListener, MailNotifier, Status Delivery
@@ -8571,10 +8705,10 @@ the @code{buildbot statusgui} command:
 buildbot statusgui --master @var{MASTERHOST}:@var{PORT}
 @end example
 
-This command starts a simple Gtk+-based status client, which contains
-a few boxes for each Builder that change color as events occur. It
-uses the same @option{--master} argument as the @command{buildbot
-statuslog} command (@pxref{statuslog}).
+This command starts a simple Gtk+-based status client, which contains a few
+boxes for each Builder that change color as events occur. It uses the same
+@option{--master} argument and @code{masterstatus} option as the
+@command{buildbot statuslog} command (@pxref{statuslog}).
 
 @node try,  , statusgui, Developer Tools
 @subsection try
@@ -8992,19 +9126,20 @@ VC server. It requires that you have a PBChangeSource
 buildbot sendchange --master @var{MASTERHOST}:@var{PORT} --username @var{USER} @var{FILENAMES..}
 @end example
 
-There are other (optional) arguments which can influence the
-@code{Change} that gets submitted:
+The @code{master} and @code{username} arguments can also be given in the
+options file (@pxref{.buildbot config directory}).  There are other (optional)
+arguments which can influence the @code{Change} that gets submitted:
 
 @table @code
 @item --branch
-This provides the (string) branch specifier. If omitted, it defaults
-to None, indicating the ``default branch''. All files included in this
-Change must be on the same branch.
+(or option @code{branch}) This provides the (string) branch specifier. If
+omitted, it defaults to None, indicating the ``default branch''. All files
+included in this Change must be on the same branch.
 
 @item --category
-This provides the (string) category specifier. If omitted, it defaults
-to None, indicating ``no category''. The category property is used
-by Schedulers to filter what changes they listen to.
+(or option @code{category}) This provides the (string) category specifier. If
+omitted, it defaults to None, indicating ``no category''. The category property
+is used by Schedulers to filter what changes they listen to.
 
 @item --revision_number
 This provides a (numeric) revision number for the change, used for VC systems
@@ -9055,7 +9190,7 @@ value.
 
 @option{--master} can also be provided in @file{.debug/options} by the
 @code{master} key. @option{--passwd} can be provided by the
-@code{debugPassword} key.
+@code{debugPassword} key.  @xref{.buildbot config directory}.
 
 The @code{Connect} button must be pressed before any of the other
 buttons will be active. This establishes the connection to the
@@ -9129,63 +9264,79 @@ master = 'buildbot.example.org:18990'
 debugPassword = 'eiv7Po'
 @end example
 
+Note carefully that the names in the @code{options} file usually do not match
+the command-line option name.
+
 @table @code
 @item masterstatus
-Location of the @code{client.PBListener} status port, used by
-@command{statuslog} and @command{statusgui}.
+Equivalent to @code{--master} for @ref{statuslog} and @ref{statusgui}, this
+gives the location of the @code{client.PBListener} status port.
 
 @item master
-Location of the @code{debugPort} (for @command{debugclient}). Also the
-location of the @code{pb.PBChangeSource} (for @command{sendchange}).
-Usually shares the slaveport, but a future version may make it
-possible to have these listen on a separate port number.
+Equivalent to @code{--master} for @ref{debugclient} and @ref{sendchange}.
+This option is used for two purposes.  It is the location of the
+@code{debugPort} for @command{debugclient} and the location of the
+@code{pb.PBChangeSource} for @command{sendchange}.  Generally these are the
+same port.
 
 @item debugPassword
-Must match the value of @code{c['debugPassword']}, used to protect the
+Equivalent to @code{--passwd} for @ref{debugclient}.
+
+XXX Must match the value of @code{c['debugPassword']}, used to protect the
 debug port, for the @command{debugclient} command.
 
 @item username
-Provides a default username for the @command{sendchange} command.
+Equivalent to @code{--username} for the @ref{sendchange} command.
 
-@end table
+@item branch
+Equivalent to @code{--branch} for the @ref{sendchange} command.
 
+@item category
+Equivalent to @code{--category} for the @ref{sendchange} command.
 
-The following options are used by the @code{buildbot try} command
-(@pxref{try}):
-
-@table @code
 @item try_connect
-This specifies how the ``try'' command should deliver its request to
-the buildmaster. The currently accepted values are ``ssh'' and ``pb''.
+Equivalent to @code{--connect}, this specifies how the @ref{try} command should
+deliver its request to the buildmaster. The currently accepted values are
+``ssh'' and ``pb''.
+
 @item try_builders
-Which builders should be used for the ``try'' build.
+Equivalent to @code{--builders}, specifies which builders should be used for
+the @ref{try} build.
+
 @item try_vc
-This specifies the version control system being used.
+Equivalent to @code{--vc} for @ref{try}, this specifies the version control
+system being used.
+
 @item try_branch
-This indicates that the current tree is on a non-trunk branch.
+Equivlanent to @code{--branch}, this indicates that the current tree is on a non-trunk branch.
+
 @item try_topdir
 @item try_topfile
-Use @code{try_topdir} to explicitly indicate the top of your working
-tree, or @code{try_topfile} to name a file that will only be found in
-that top-most directory.
+Use @code{try_topdir}, equivalent to @code{--try-topdir}, to explicitly
+indicate the top of your working tree, or @code{try_topfile}, equivalent to
+@code{--try-topfile} to name a file that will only be found in that top-most
+directory.
 
 @item try_host
 @item try_username
 @item try_dir
-When try_connect is ``ssh'', the command will pay attention to
-@code{try_host}, @code{try_username}, and @code{try_dir}.
+When @code{try_connect} is ``ssh'', the command will use @code{try_host} for
+@code{--tryhost}, @code{try_username} for @code{--username}, and @code{try_dir}
+for @code{--trydir}.  Apologies for the confusing presence and absence of
+'try'.
 
 @item try_username
 @item try_password
 @item try_master
-Instead, when @code{try_connect} is ``pb'', the command will pay
-attention to @code{try_username}, @code{try_password}, and
-@code{try_master}.
+Similarly, when @code{try_connect} is ``pb'', the command will pay attention to
+@code{try_username} for @code{--username}, @code{try_password} for
+@code{--passwd}, and @code{try_master} for @code{--master}.
 
 @item try_wait
 @item masterstatus
-@code{try_wait} and @code{masterstatus} are used to ask the ``try''
-command to wait for the requested build to complete.
+@code{try_wait} and @code{masterstatus} (equivalent to @code{--wait} and
+@code{master}, respectively) are used to ask the @ref{try} command to wait for
+the requested build to complete.
 
 @end table
 
@@ -9200,6 +9351,9 @@ For configuration questions and general discussion, please use the
 @code{buildbot-devel} mailing list. The subscription instructions and
 archives are available at
 @uref{http://lists.sourceforge.net/lists/listinfo/buildbot-devel}
+
+The #buildbot channel on Freenode's IRC servers hosts development discussion, and
+often folks are available to answer questions there, as well.
 
 @node Developer's Appendix, Index of Useful Classes, Resources, Top
 @unnumbered Developer's Appendix
