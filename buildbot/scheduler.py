@@ -17,6 +17,21 @@ from buildbot.changes.maildir import MaildirService
 from buildbot.process.properties import Properties
 
 
+def insertChangeObeyingDateOrder(list, change):
+    """
+    Helper function to insert new changes in the change list.
+
+    If changes with a date arrive out-of-order, this function takes care of
+    sorting them correctly.
+
+    Changes with no date set are not re-ordered.
+    """
+    idx = len(list)
+    while idx > 0 and change.when and list[idx-1].when and change.when < list[idx-1].when:
+        idx = idx - 1
+    list.insert(idx, change)
+
+
 class BaseScheduler(service.MultiService, util.ComparableMixin):
     """
     A Scheduler creates BuildSets and submits them to the BuildMaster.
@@ -163,15 +178,15 @@ class Scheduler(BaseUpstreamScheduler):
 
     def addImportantChange(self, change):
         log.msg("%s: change is important, adding %s" % (self, change))
-        self.importantChanges.append(change)
-        self.allChanges.append(change)
+        insertChangeObeyingDateOrder(self.importantChanges, change)
+        insertChangeObeyingDateOrder(self.allChanges, change)
         self.nextBuildTime = max(self.nextBuildTime,
                                  change.when + self.treeStableTimer)
         self.setTimer(self.nextBuildTime)
 
     def addUnimportantChange(self, change):
         log.msg("%s: change is not important, adding %s" % (self, change))
-        self.allChanges.append(change)
+        insertChangeObeyingDateOrder(self.allChanges, change)
 
     def setTimer(self, when):
         log.msg("%s: setting timer to %s" %
@@ -628,12 +643,12 @@ class Nightly(BaseUpstreamScheduler):
  
     def addImportantChange(self, change):
         log.msg("Nightly Scheduler <%s>: change %s from %s is important, adding it" % (self.name, change.revision, change.who)) 
-        self.allChanges.append(change) 
-        self.importantChanges.append(change) 
+        insertChangeObeyingDateOrder(self.allChanges, change) 
+        insertChangeObeyingDateOrder(self.importantChanges, change) 
  
     def addUnimportantChange(self, change):
         log.msg("Nightly Scheduler <%s>: change %s from %s is not important, adding it" % (self.name, change.revision, change.who)) 
-        self.allChanges.append(change) 
+        insertChangeObeyingDateOrder(self.allChanges, change)
 
 
 class TryBase(BaseScheduler):
